@@ -462,7 +462,6 @@
                 display: block;
             }
             .mobile-only { display: block; }
-            .header-search-bar input:focus { width: 110px; }
             .user-message { max-width: 95%; }
             .bottom-input-panel { 
                 padding: 10px 12px; 
@@ -698,7 +697,7 @@
                     </div>
 
                     <div style="border-top: 1px dashed var(--border); padding-top: 15px; display: flex; flex-direction: column; gap: 10px;">
-                        <span class="section-title" style="color: var(--primary); font-weight: bold; padding-left: 0;">☁️ Kết nối Đám mây Google Drive (Tự động Sao lưu)</span>
+                        <span class="section-title" style="color: var(--primary); font-weight: bold; padding-left: 0;">☁️ Kết nối Đám mây Google Drive (Hai chiều)</span>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                             <div>
                                 <label class="field-label" style="font-size: 0.75rem;">Google Client ID:</label>
@@ -822,7 +821,6 @@
                 statusMsg.style.color = "green";
             }
 
-            // Tải cấu hình tài khoản Google Drive
             document.getElementById('gdrive-client-id').value = localStorage.getItem('gdrive_client_id') || "";
             document.getElementById('gdrive-api-key').value = localStorage.getItem('gdrive_api_key') || "";
             gdriveAccessToken = localStorage.getItem('gdrive_access_token') || null;
@@ -845,7 +843,7 @@
             showToast(`Đã lưu cấu hình hệ thống!`);
         };
 
-        // KHỞI TẠO VÀ XỬ LÝ GOOGLE DRIVE API (TỰ ĐỘNG ĐỒNG BỘ)
+        // KHỞI TẠO VÀ XỬ LÝ GOOGLE DRIVE API (XUẤT / NHẬP HAI CHIỀU)
         function initGoogleDriveOAuth() {
             const clientId = document.getElementById('gdrive-client-id').value.trim();
             if (!clientId) return;
@@ -862,8 +860,9 @@
                         localStorage.setItem('gdrive_access_token', gdriveAccessToken);
                         document.getElementById('gdrive-status').innerText = "✅ Đã liên kết";
                         document.getElementById('gdrive-status').style.color = "green";
-                        showToast("Đã đồng bộ Google Drive thành công!");
-                        await uploadBackupToGDrive(true);
+                        showToast("Đã liên kết tài khoản Google!");
+                        // Tự động kéo dữ liệu về nếu thiết bị hiện tại chưa có data
+                        await syncDownFromGDrive();
                     },
                 });
             } catch (err) {
@@ -886,10 +885,11 @@
             if (googleTokenClient) {
                 googleTokenClient.requestAccessToken({ prompt: 'consent' });
             } else {
-                showToast("Google SDK chưa sẵn sàng, hãy thử lại sau vài giây!", "error");
+                showToast("Google SDK chưa sẵn sàng, hãy thử lại sau!", "error");
             }
         };
 
+        // TÍNH NĂNG ĐẨY LÊN (UPLOAD BACKUP)
         async function uploadBackupToGDrive(isManualTrigger = false) {
             if (!gdriveAccessToken) return;
             try {
@@ -897,7 +897,6 @@
                 const backupPayload = { backupDate: new Date().toISOString(), sessions: allSessions, activeId: activeId };
                 const contentBlobStr = JSON.stringify(backupPayload, null, 2);
                 
-                // Bước 1: Quét tìm tệp sao lưu cũ tránh tạo trùng lặp file
                 const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='Javiss_Backup.json'+and+trashed=false&fields=files(id)`;
                 const searchRes = await fetch(searchUrl, {
                     headers: { 'Authorization': `Bearer ${gdriveAccessToken}` }
@@ -906,7 +905,6 @@
                 let fileId = (searchData.files && searchData.files.length > 0) ? searchData.files[0].id : null;
                 
                 if (fileId) {
-                    // Bước 2a: Nếu tệp tồn tại, cập nhật đè dữ liệu ngầm lên
                     const updateUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
                     await fetch(updateUrl, {
                         method: 'PATCH',
@@ -914,7 +912,6 @@
                         body: contentBlobStr
                     });
                 } else {
-                    // Bước 2b: Tạo tệp mới nếu là lần đồng bộ đầu tiên
                     const metaRes = await fetch('https://www.googleapis.com/drive/v3/files', {
                         method: 'POST',
                         headers: { 'Authorization': `Bearer ${gdriveAccessToken}`, 'Content-Type': 'application/json' },
@@ -931,16 +928,61 @@
                     });
                 }
                 if (isManualTrigger) showToast("☁️ Đã đồng bộ bản sao lưu lên Google Drive!");
-                console.log("Auto sync to Google Drive finished successfully.");
             } catch (err) {
-                console.error("Cloud synchronization encountered an issue:", err);
-                // Nếu Token hết hạn (hết hiệu lực), chuyển trạng thái để người dùng liên kết lại khi cần
+                console.error("Lỗi sao lưu đám mây:", err);
                 if(isManualTrigger) showToast("Lỗi đồng bộ dữ liệu đám mây!", "error");
+            }
+        }
+
+        // TÍNH NĂNG TẢI VỀ / ĐỒNG BỘ XUỐNG (DOWNLOAD SYNC-DOWN - GIẢI QUYẾT LỖI THIẾT BỊ 2 TRỐNG DATA)
+        async function syncDownFromGDrive() {
+            if (!gdriveAccessToken) return;
+            try {
+                const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='Javiss_Backup.json'+and+trashed=false&fields=files(id)`;
+                const searchRes = await fetch(searchUrl, {
+                    headers: { 'Authorization': `Bearer ${gdriveAccessToken}` }
+                });
+                const searchData = await searchRes.json();
+                const fileId = (searchData.files && searchData.files.length > 0) ? searchData.files[0].id : null;
+                
+                if (!fileId) {
+                    // Nếu trên Drive chưa từng có file, tiến hành up data hiện hành lên làm mốc gốc
+                    await uploadBackupToGDrive(false);
+                    return;
+                }
+                
+                // Gửi request tải nội dung tệp tin JSON
+                const downloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+                const downloadRes = await fetch(downloadUrl, {
+                    headers: { 'Authorization': `Bearer ${gdriveAccessToken}` }
+                });
+                const backupData = await downloadRes.json();
+                
+                if (backupData && backupData.sessions) {
+                    const localData = await getAllFromDB();
+                    // Nếu thiết bị hiện tại trống rỗng (máy mới), tự động phục hồi. Nếu có data cũ, hỏi ý kiến xác nhận
+                    if (localData.length === 0 || confirm("Tìm thấy tệp tin sao lưu hội thoại trên Cloud. Đồng bộ và khôi phục dữ liệu về máy này?")) {
+                        await clearAllDB();
+                        
+                        // Ghi tuần tự trực tiếp tránh tạo vòng lặp kích hoạt ngược hàm upload
+                        for (let s of backupData.sessions) {
+                            const tx = db.transaction(STORE_NAME, "readwrite");
+                            tx.objectStore(STORE_NAME).put(s);
+                            await new Promise(r => tx.oncomplete = r);
+                        }
+                        
+                        if (backupData.activeId) localStorage.setItem('javiss_active_id', backupData.activeId);
+                        await loadSess();
+                        showToast("📥 Đã nạp và đồng bộ dữ liệu từ đám mây!");
+                    }
+                }
+            } catch (err) {
+                console.error("Lỗi đồng bộ tải dữ liệu từ Google Drive xuống:", err);
             }
         }
         
         initAPIKeys();
-        setTimeout(initGoogleDriveOAuth, 1500); // Trì hoãn khởi tạo để SDK Google load mượt mà
+        setTimeout(initGoogleDriveOAuth, 1500); 
         
         const SAFETY = [ 
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE }, 
@@ -984,7 +1026,7 @@
                 tx.objectStore(STORE_NAME).put(s); 
                 tx.oncomplete = () => {
                     resolve();
-                    uploadBackupToGDrive(false); // Trigger tự động đồng bộ lên Drive bất cứ khi nào DB thay đổi
+                    uploadBackupToGDrive(false); 
                 }; 
             }); 
         }
@@ -1610,6 +1652,10 @@
                     renderFolders(); 
                     await newSess(); 
                 }
+                // Nếu khởi tạo ứng dụng mà token đã được nạp sẵn, tự động kiểm tra kéo data mới về
+                if (gdriveAccessToken && sessions.length > 0) {
+                    await syncDownFromGDrive();
+                }
             } catch (e) { 
                 await newSess(); 
             }
@@ -1696,7 +1742,7 @@
 
         document.getElementById('btn-delete-session').onclick = async () => { 
             if (sessions.length <= 1) return showToast("Phải giữ lại ít nhất 1 phiên", "error"); 
-            if (!confirm("Xóa phiên này?")) return; 
+            if (!confirm("Xóa phiên này?")); 
             
             await deleteFromDB(activeId); 
             sessions = sessions.filter(s => s.id !== activeId); 
@@ -1949,7 +1995,6 @@
                         let displayTxt = fullResponse.replace(/\[URL:\s*(https?:\/\/[^\s]+)\]/g, '<a href="$1" target="_blank" style="color:var(--primary)">$1</a>');
                         contentDiv.innerHTML = marked.parse(displayTxt);
                         
-                        // KÍCH HOẠT LỆNH CUỘN LÊN ĐỈNH ĐÚNG 1 LẦN DUY NHẤT KHI CHỮ XUẤT HIỆN
                         if (!hasScrolledToTop && fullResponse.trim().length > 0) {
                             DOM.chat.scrollTo({
                                 top: botDiv.offsetTop - DOM.chat.offsetTop - 15,
