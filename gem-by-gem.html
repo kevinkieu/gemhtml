@@ -193,6 +193,7 @@
               <div><label class="field-label" style="font-size:.75rem;">Google API Key:</label><input type="password" id="gdrive-api-key" class="modern-input" style="font-size:.8rem;" placeholder="Nhập Cloud API Key..."></div>
             </div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:4px;"><button id="btn-connect-gdrive" class="btn" style="flex:1;font-weight:bold;color:var(--primary);border-color:var(--primary);">🔗 Kết nối Google Drive</button><span id="gdrive-status" style="font-size:.8rem;font-weight:bold;color:var(--text-muted);">Chưa liên kết</span></div>
+            <div style="display:flex;gap:10px;margin-top:5px;"><button id="btn-push-cloud" class="btn primary" style="flex:1;">☁️ Đẩy lên Cloud</button><button id="btn-pull-cloud" class="btn warning" style="flex:1;">📥 Kéo về Máy</button></div>
           </div>
         </fieldset>
       </div>
@@ -243,6 +244,20 @@
       if(!c)return showToast("Vui lòng nhập Google Client ID!","warning");
       if(!googleTokenClient)initGoogleDriveOAuth();
       if(googleTokenClient)googleTokenClient.requestAccessToken({prompt:'consent'}); else showToast("Google SDK chưa sẵn sàng!","error");
+    };
+    document.getElementById('btn-push-cloud').onclick=async()=>{
+      if(!gdriveAccessToken)return showToast("Vui lòng kết nối Google Drive trước!","error");
+      const oBtn = document.getElementById('btn-push-cloud').innerHTML;
+      document.getElementById('btn-push-cloud').innerHTML = "⏳ Đang đẩy...";
+      await uploadBackupToGDrive(true);
+      document.getElementById('btn-push-cloud').innerHTML = oBtn;
+    };
+    document.getElementById('btn-pull-cloud').onclick=async()=>{
+      if(!gdriveAccessToken)return showToast("Vui lòng kết nối Google Drive trước!","error");
+      const oBtn = document.getElementById('btn-pull-cloud').innerHTML;
+      document.getElementById('btn-pull-cloud').innerHTML = "⏳ Đang kéo...";
+      await syncDownFromGDrive();
+      document.getElementById('btn-pull-cloud').innerHTML = oBtn;
     };
     async function uploadBackupToGDrive(m=false){
       if(!gdriveAccessToken)return;
